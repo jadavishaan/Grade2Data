@@ -1,6 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) {
+  console.warn("GEMINI_API_KEY is missing. AI extraction will not work.");
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey || "" });
 
 export interface MarksheetData {
   studentName: string;
