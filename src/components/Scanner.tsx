@@ -41,10 +41,12 @@ export default function Scanner() {
       const newRecords: ExtractedRecord[] = [];
       let lastInstitution = "";
 
-      for (let i = 0; i < images.length; i++) {
-        setProgress(prev => ({ ...prev, current: i + 1 }));
+      // Process pages in parallel for speed
+      const extractionPromises = images.map(async (image, i) => {
         try {
-          const data = await extractMarksheetData(images[i]);
+          const data = await extractMarksheetData(image);
+          setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+          
           if (data) {
             // Normalize status
             let status = data.resultStatus?.trim() || '';
@@ -52,35 +54,44 @@ export default function Scanner() {
             else if (status.toLowerCase().includes('fail')) status = 'Fail';
             data.resultStatus = status;
 
-            // Inherit institution
-            if (data.institutionName) {
-              lastInstitution = data.institutionName;
-            } else if (lastInstitution) {
-              data.institutionName = lastInstitution;
-            }
-
-            // Ensure subjects have subjectName (fallback if AI used old format)
+            // Ensure subjects have subjectName
             data.subjects = data.subjects.map(s => ({
               ...s,
               subjectName: s.subjectName || (s as any).subject || ''
             }));
 
-            newRecords.push({
+            return {
               ...data,
               id: crypto.randomUUID(),
               pageNumber: i + 1
-            });
+            };
           }
         } catch (pageErr) {
           console.error(`Error on page ${i + 1}:`, pageErr);
-          // We continue with other pages but log the error
+          setProgress(prev => ({ ...prev, current: prev.current + 1 }));
         }
-      }
+        return null;
+      });
 
-      if (newRecords.length === 0) {
+      const results = await Promise.all(extractionPromises);
+      
+      // Filter out nulls and sort by page number
+      const validRecords = (results.filter(r => r !== null) as ExtractedRecord[])
+        .sort((a, b) => a.pageNumber - b.pageNumber);
+
+      // Post-process to inherit institution names sequentially
+      validRecords.forEach(record => {
+        if (record.institutionName) {
+          lastInstitution = record.institutionName;
+        } else if (lastInstitution) {
+          record.institutionName = lastInstitution;
+        }
+      });
+
+      if (validRecords.length === 0) {
         setError('Failed to extract any data from the PDF. Please ensure it contains readable marksheets.');
       } else {
-        setRecords(newRecords);
+        setRecords(validRecords);
       }
     } catch (err) {
       console.error(err);
