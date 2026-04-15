@@ -30,6 +30,12 @@ export default function Scanner() {
 
     try {
       const images = await convertPdfToImages(file);
+      if (images.length === 0) {
+        setError('No pages found in the PDF file.');
+        setIsScanning(false);
+        return;
+      }
+      
       setProgress({ current: 0, total: images.length });
 
       const newRecords: ExtractedRecord[] = [];
@@ -37,39 +43,48 @@ export default function Scanner() {
 
       for (let i = 0; i < images.length; i++) {
         setProgress(prev => ({ ...prev, current: i + 1 }));
-        const data = await extractMarksheetData(images[i]);
-        if (data) {
-          // Normalize status
-          let status = data.resultStatus?.trim() || '';
-          if (status.toLowerCase().includes('pass')) status = 'Pass';
-          else if (status.toLowerCase().includes('fail')) status = 'Fail';
-          data.resultStatus = status;
+        try {
+          const data = await extractMarksheetData(images[i]);
+          if (data) {
+            // Normalize status
+            let status = data.resultStatus?.trim() || '';
+            if (status.toLowerCase().includes('pass')) status = 'Pass';
+            else if (status.toLowerCase().includes('fail')) status = 'Fail';
+            data.resultStatus = status;
 
-          // Inherit institution
-          if (data.institutionName) {
-            lastInstitution = data.institutionName;
-          } else if (lastInstitution) {
-            data.institutionName = lastInstitution;
+            // Inherit institution
+            if (data.institutionName) {
+              lastInstitution = data.institutionName;
+            } else if (lastInstitution) {
+              data.institutionName = lastInstitution;
+            }
+
+            // Ensure subjects have subjectName (fallback if AI used old format)
+            data.subjects = data.subjects.map(s => ({
+              ...s,
+              subjectName: s.subjectName || (s as any).subject || ''
+            }));
+
+            newRecords.push({
+              ...data,
+              id: crypto.randomUUID(),
+              pageNumber: i + 1
+            });
           }
-
-          // Ensure subjects have subjectName (fallback if AI used old format)
-          data.subjects = data.subjects.map(s => ({
-            ...s,
-            subjectName: s.subjectName || (s as any).subject || ''
-          }));
-
-          newRecords.push({
-            ...data,
-            id: crypto.randomUUID(),
-            pageNumber: i + 1
-          });
+        } catch (pageErr) {
+          console.error(`Error on page ${i + 1}:`, pageErr);
+          // We continue with other pages but log the error
         }
       }
 
-      setRecords(newRecords);
+      if (newRecords.length === 0) {
+        setError('Failed to extract any data from the PDF. Please ensure it contains readable marksheets.');
+      } else {
+        setRecords(newRecords);
+      }
     } catch (err) {
       console.error(err);
-      setError('An error occurred while processing the PDF.');
+      setError(err instanceof Error ? err.message : 'An error occurred while processing the PDF.');
     } finally {
       setIsScanning(false);
     }

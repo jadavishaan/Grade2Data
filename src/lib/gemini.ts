@@ -70,10 +70,21 @@ export async function extractMarksheetData(base64Image: string): Promise<Markshe
       },
     });
 
-    if (!response.text) return null;
-    return JSON.parse(response.text) as MarksheetData;
+    if (!response.text) {
+      throw new Error("No text returned from Gemini API");
+    }
+    
+    try {
+      return JSON.parse(response.text) as MarksheetData;
+    } catch (parseError) {
+      console.error("JSON Parse Error:", response.text);
+      throw new Error("Failed to parse marksheet data from AI response");
+    }
   } catch (error) {
     console.error("Error extracting marksheet data:", error);
-    return null;
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error("An unknown error occurred during AI extraction");
   }
 }
