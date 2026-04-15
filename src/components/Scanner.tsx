@@ -29,83 +29,47 @@ export default function Scanner() {
     setRecords([]);
 
     try {
-      const images = await convertPdfToImages(file).catch(err => {
-        console.error('PDF Conversion Error:', err);
-        throw new Error(`Failed to read PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      });
-      
-      if (images.length === 0) {
-        setError('No pages found in the PDF file.');
-        setIsScanning(false);
-        return;
-      }
-      
+      const images = await convertPdfToImages(file);
       setProgress({ current: 0, total: images.length });
 
       const newRecords: ExtractedRecord[] = [];
       let lastInstitution = "";
 
-      // Process pages in batches to avoid rate limits while maintaining speed
-      const BATCH_SIZE = 3;
-      const results: (ExtractedRecord | null)[] = new Array(images.length).fill(null);
+      for (let i = 0; i < images.length; i++) {
+        setProgress(prev => ({ ...prev, current: i + 1 }));
+        const data = await extractMarksheetData(images[i]);
+        if (data) {
+          // Normalize status
+          let status = data.resultStatus?.trim() || '';
+          if (status.toLowerCase().includes('pass')) status = 'Pass';
+          else if (status.toLowerCase().includes('fail')) status = 'Fail';
+          data.resultStatus = status;
 
-      for (let i = 0; i < images.length; i += BATCH_SIZE) {
-        const batch = images.slice(i, i + BATCH_SIZE);
-        const batchPromises = batch.map(async (image, index) => {
-          const pageIdx = i + index;
-          try {
-            const data = await extractMarksheetData(image);
-            setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-            
-            if (data) {
-              // Normalize status
-              let status = data.resultStatus?.trim() || '';
-              if (status.toLowerCase().includes('pass')) status = 'Pass';
-              else if (status.toLowerCase().includes('fail')) status = 'Fail';
-              data.resultStatus = status;
-
-              // Ensure subjects have subjectName
-              data.subjects = data.subjects.map(s => ({
-                ...s,
-                subjectName: s.subjectName || (s as any).subject || ''
-              }));
-
-              results[pageIdx] = {
-                ...data,
-                id: crypto.randomUUID(),
-                pageNumber: pageIdx + 1
-              };
-            }
-          } catch (pageErr) {
-            console.error(`Error on page ${pageIdx + 1}:`, pageErr);
-            setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+          // Inherit institution
+          if (data.institutionName) {
+            lastInstitution = data.institutionName;
+          } else if (lastInstitution) {
+            data.institutionName = lastInstitution;
           }
-        });
 
-        await Promise.all(batchPromises);
-      }
-      
-      // Filter out nulls and sort by page number
-      const validRecords = (results.filter(r => r !== null) as ExtractedRecord[])
-        .sort((a, b) => a.pageNumber - b.pageNumber);
+          // Ensure subjects have subjectName (fallback if AI used old format)
+          data.subjects = data.subjects.map(s => ({
+            ...s,
+            subjectName: s.subjectName || (s as any).subject || ''
+          }));
 
-      // Post-process to inherit institution names sequentially
-      validRecords.forEach(record => {
-        if (record.institutionName) {
-          lastInstitution = record.institutionName;
-        } else if (lastInstitution) {
-          record.institutionName = lastInstitution;
+          newRecords.push({
+            ...data,
+            id: crypto.randomUUID(),
+            pageNumber: i + 1
+          });
         }
-      });
-
-      if (validRecords.length === 0) {
-        setError('Failed to extract any data from the PDF. Please ensure it contains readable marksheets.');
-      } else {
-        setRecords(validRecords);
       }
+
+      setRecords(newRecords);
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : 'An error occurred while processing the PDF.');
+      setError('An error occurred while processing the PDF.');
     } finally {
       setIsScanning(false);
     }

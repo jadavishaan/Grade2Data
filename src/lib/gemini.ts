@@ -1,11 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  console.warn("GEMINI_API_KEY is missing. AI extraction will not work.");
-}
-
-const ai = new GoogleGenAI({ apiKey: apiKey || "" });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export interface MarksheetData {
   studentName: string;
@@ -75,21 +70,10 @@ export async function extractMarksheetData(base64Image: string): Promise<Markshe
       },
     });
 
-    if (!response.text) {
-      throw new Error("No text returned from Gemini API");
-    }
-    
-    try {
-      return JSON.parse(response.text) as MarksheetData;
-    } catch (parseError) {
-      console.error("JSON Parse Error:", response.text);
-      throw new Error("Failed to parse marksheet data from AI response");
-    }
+    if (!response.text) return null;
+    return JSON.parse(response.text) as MarksheetData;
   } catch (error) {
     console.error("Error extracting marksheet data:", error);
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error("An unknown error occurred during AI extraction");
+    return null;
   }
 }
