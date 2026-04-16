@@ -25,12 +25,18 @@ export async function extractMarksheetData(base64Image: string): Promise<Markshe
       model: "gemini-3.1-pro-preview",
       contents: [
         {
-          inlineData: {
-            mimeType: "image/png",
-            data: base64Image,
-          },
+          parts: [
+            {
+              inlineData: {
+                mimeType: "image/png",
+                data: base64Image,
+              },
+            },
+            {
+              text: "Extract student marksheet data. Use empty string/0 if missing. resultStatus must be 'Pass' or 'Fail'. Include subject codes and institutionName if implied.",
+            },
+          ],
         },
-        "Extract student marksheet data. Use empty string/0 if missing. resultStatus must be 'Pass' or 'Fail'. Include subject codes and institutionName if implied.",
       ],
       config: {
         responseMimeType: "application/json",

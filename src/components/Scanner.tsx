@@ -41,7 +41,7 @@ export default function Scanner() {
     setRecords([]);
     
     const initialBatch: FileStatus[] = files.map(f => ({
-      id: crypto.randomUUID(),
+      id: Math.random().toString(36).substring(2, 15),
       name: f.name,
       status: 'pending',
       current: 0,
@@ -49,63 +49,76 @@ export default function Scanner() {
     }));
     setBatchFiles(initialBatch);
 
-    const allNewRecords: ExtractedRecord[] = [];
+    try {
+      const allNewRecords: ExtractedRecord[] = [];
 
-    for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
-      const file = files[fileIdx];
-      const batchId = initialBatch[fileIdx].id;
+      for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
+        const file = files[fileIdx];
+        const batchId = initialBatch[fileIdx].id;
 
-      setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'processing' } : f));
+        setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'processing' } : f));
 
-      try {
-        const images = await convertPdfToImages(file);
-        setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, total: images.length } : f));
+        try {
+          const images = await convertPdfToImages(file);
+          setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, total: images.length } : f));
 
-        let lastInstitution = "";
+          let lastInstitution = "";
+          let extractedAny = false;
 
-        for (let i = 0; i < images.length; i++) {
-          setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, current: i + 1 } : f));
-          const data = await extractMarksheetData(images[i]);
-          if (data) {
-            // Normalize status
-            let status = data.resultStatus?.trim() || '';
-            if (status.toLowerCase().includes('pass')) status = 'Pass';
-            else if (status.toLowerCase().includes('fail')) status = 'Fail';
-            data.resultStatus = status;
+          for (let i = 0; i < images.length; i++) {
+            setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, current: i + 1 } : f));
+            const data = await extractMarksheetData(images[i]);
+            if (data) {
+              extractedAny = true;
+              // Normalize status
+              let status = data.resultStatus?.trim() || '';
+              if (status.toLowerCase().includes('pass')) status = 'Pass';
+              else if (status.toLowerCase().includes('fail')) status = 'Fail';
+              data.resultStatus = status;
 
-            // Inherit institution
-            if (data.institutionName) {
-              lastInstitution = data.institutionName;
-            } else if (lastInstitution) {
-              data.institutionName = lastInstitution;
+              // Inherit institution
+              if (data.institutionName) {
+                lastInstitution = data.institutionName;
+              } else if (lastInstitution) {
+                data.institutionName = lastInstitution;
+              }
+
+              // Ensure subjects have subjectName
+              data.subjects = data.subjects.map(s => ({
+                ...s,
+                subjectName: s.subjectName || (s as any).subject || ''
+              }));
+
+              allNewRecords.push({
+                ...data,
+                id: Math.random().toString(36).substring(2, 15),
+                pageNumber: i + 1
+              });
             }
-
-            // Ensure subjects have subjectName
-            data.subjects = data.subjects.map(s => ({
-              ...s,
-              subjectName: s.subjectName || (s as any).subject || ''
-            }));
-
-            allNewRecords.push({
-              ...data,
-              id: crypto.randomUUID(),
-              pageNumber: i + 1
-            });
           }
-        }
-        setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'success' } : f));
-      } catch (err) {
-        console.error(err);
-        setBatchFiles(prev => prev.map(f => f.id === batchId ? { 
-          ...f, 
-          status: 'error', 
-          errorMessage: 'Failed to process PDF' 
-        } : f));
-      }
-    }
 
-    setRecords(allNewRecords);
-    setIsScanning(false);
+          if (!extractedAny && images.length > 0) {
+            throw new Error('No data could be extracted from this PDF.');
+          }
+
+          setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'success' } : f));
+        } catch (err) {
+          console.error(err);
+          setBatchFiles(prev => prev.map(f => f.id === batchId ? { 
+            ...f, 
+            status: 'error', 
+            errorMessage: err instanceof Error ? err.message : 'Failed to process PDF' 
+          } : f));
+        }
+      }
+
+      setRecords(prev => [...prev, ...allNewRecords]);
+    } catch (err) {
+      console.error(err);
+      setError('An unexpected error occurred during batch processing.');
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const exportToCsv = () => {
