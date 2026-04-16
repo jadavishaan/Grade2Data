@@ -1,6 +1,6 @@
 {
   "name": "Grade2Data",
-  "description": "Automated Marksheet scanning system",
+  "description": "Extract structured data from student marksheet PDFs into a CSV file using Gemini AI.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

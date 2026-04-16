@@ -22,7 +22,7 @@ export interface MarksheetData {
 export async function extractMarksheetData(base64Image: string): Promise<MarksheetData | null> {
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3-flash-preview",
       contents: [
         {
           parts: [
@@ -33,7 +33,7 @@ export async function extractMarksheetData(base64Image: string): Promise<Markshe
               },
             },
             {
-              text: "Extract student marksheet data. Use empty string/0 if missing. resultStatus must be 'Pass' or 'Fail'. Include subject codes and institutionName if implied.",
+              text: "Extract the student marksheet data from this image. If a field is not found, use an empty string or 0 as appropriate. For resultStatus, strictly use 'Pass' or 'Fail' to avoid inconsistencies. Extract subject codes if available. Ensure institutionName is extracted. If not explicitly written but implied by the document context, include it.",
             },
           ],
         },
