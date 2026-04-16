@@ -11,68 +11,101 @@ interface ExtractedRecord extends MarksheetData {
   pageNumber: number;
 }
 
+interface FileStatus {
+  id: string;
+  name: string;
+  status: 'pending' | 'processing' | 'success' | 'error';
+  current: number;
+  total: number;
+  errorMessage?: string;
+}
+
 export default function Scanner() {
   const [isScanning, setIsScanning] = useState(false);
   const [records, setRecords] = useState<ExtractedRecord[]>([]);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [batchFiles, setBatchFiles] = useState<FileStatus[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || file.type !== 'application/pdf') {
-      setError('Please upload a valid PDF file.');
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
+
+    const invalidFiles = files.filter(f => f.type !== 'application/pdf');
+    if (invalidFiles.length > 0) {
+      setError('Only PDF files are supported.');
       return;
     }
 
     setIsScanning(true);
     setError(null);
     setRecords([]);
+    
+    const initialBatch: FileStatus[] = files.map(f => ({
+      id: crypto.randomUUID(),
+      name: f.name,
+      status: 'pending',
+      current: 0,
+      total: 0
+    }));
+    setBatchFiles(initialBatch);
 
-    try {
-      const images = await convertPdfToImages(file);
-      setProgress({ current: 0, total: images.length });
+    const allNewRecords: ExtractedRecord[] = [];
 
-      const newRecords: ExtractedRecord[] = [];
-      let lastInstitution = "";
+    for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
+      const file = files[fileIdx];
+      const batchId = initialBatch[fileIdx].id;
 
-      for (let i = 0; i < images.length; i++) {
-        setProgress(prev => ({ ...prev, current: i + 1 }));
-        const data = await extractMarksheetData(images[i]);
-        if (data) {
-          // Normalize status
-          let status = data.resultStatus?.trim() || '';
-          if (status.toLowerCase().includes('pass')) status = 'Pass';
-          else if (status.toLowerCase().includes('fail')) status = 'Fail';
-          data.resultStatus = status;
+      setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'processing' } : f));
 
-          // Inherit institution
-          if (data.institutionName) {
-            lastInstitution = data.institutionName;
-          } else if (lastInstitution) {
-            data.institutionName = lastInstitution;
+      try {
+        const images = await convertPdfToImages(file);
+        setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, total: images.length } : f));
+
+        let lastInstitution = "";
+
+        for (let i = 0; i < images.length; i++) {
+          setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, current: i + 1 } : f));
+          const data = await extractMarksheetData(images[i]);
+          if (data) {
+            // Normalize status
+            let status = data.resultStatus?.trim() || '';
+            if (status.toLowerCase().includes('pass')) status = 'Pass';
+            else if (status.toLowerCase().includes('fail')) status = 'Fail';
+            data.resultStatus = status;
+
+            // Inherit institution
+            if (data.institutionName) {
+              lastInstitution = data.institutionName;
+            } else if (lastInstitution) {
+              data.institutionName = lastInstitution;
+            }
+
+            // Ensure subjects have subjectName
+            data.subjects = data.subjects.map(s => ({
+              ...s,
+              subjectName: s.subjectName || (s as any).subject || ''
+            }));
+
+            allNewRecords.push({
+              ...data,
+              id: crypto.randomUUID(),
+              pageNumber: i + 1
+            });
           }
-
-          // Ensure subjects have subjectName (fallback if AI used old format)
-          data.subjects = data.subjects.map(s => ({
-            ...s,
-            subjectName: s.subjectName || (s as any).subject || ''
-          }));
-
-          newRecords.push({
-            ...data,
-            id: crypto.randomUUID(),
-            pageNumber: i + 1
-          });
         }
+        setBatchFiles(prev => prev.map(f => f.id === batchId ? { ...f, status: 'success' } : f));
+      } catch (err) {
+        console.error(err);
+        setBatchFiles(prev => prev.map(f => f.id === batchId ? { 
+          ...f, 
+          status: 'error', 
+          errorMessage: 'Failed to process PDF' 
+        } : f));
       }
-
-      setRecords(newRecords);
-    } catch (err) {
-      console.error(err);
-      setError('An error occurred while processing the PDF.');
-    } finally {
-      setIsScanning(false);
     }
+
+    setRecords(allNewRecords);
+    setIsScanning(false);
   };
 
   const exportToCsv = () => {
@@ -191,24 +224,63 @@ export default function Scanner() {
           <input
             type="file"
             accept=".pdf"
+            multiple
             onChange={handleFileUpload}
             disabled={isScanning}
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
           />
           
           {isScanning ? (
-            <div className="flex flex-col items-center space-y-4 text-center">
-              <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
-              <div className="space-y-2">
-                <p className="text-xl font-semibold text-gray-900">Scanning PDF...</p>
-                <p className="text-gray-500">Processing page {progress.current} of {progress.total}</p>
+            <div className="w-full max-w-2xl space-y-6">
+              <div className="flex flex-col items-center space-y-4 text-center">
+                <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                <div className="space-y-2">
+                  <p className="text-xl font-semibold text-gray-900">Processing Batch...</p>
+                  <p className="text-gray-500">
+                    {batchFiles.filter(f => f.status === 'success').length} of {batchFiles.length} files completed
+                  </p>
+                </div>
               </div>
-              <div className="w-64 h-2 bg-gray-100 rounded-full overflow-hidden">
-                <motion.div 
-                  className="h-full bg-blue-500"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(progress.current / progress.total) * 100}%` }}
-                />
+
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {batchFiles.map((file) => (
+                  <div key={file.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {file.status === 'processing' && <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />}
+                        {file.status === 'success' && <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />}
+                        {file.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+                        {file.status === 'pending' && <div className="w-4 h-4 rounded-full border-2 border-gray-200 flex-shrink-0" />}
+                        <span className="text-sm font-medium text-gray-700 truncate">{file.name}</span>
+                      </div>
+                      <span className="text-xs font-semibold uppercase tracking-wider">
+                        {file.status === 'processing' && <span className="text-blue-600">Processing</span>}
+                        {file.status === 'success' && <span className="text-green-600">Success</span>}
+                        {file.status === 'error' && <span className="text-red-600">Failed</span>}
+                        {file.status === 'pending' && <span className="text-gray-400">Pending</span>}
+                      </span>
+                    </div>
+                    
+                    {file.status === 'processing' && file.total > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[10px] text-gray-400 font-bold uppercase">
+                          <span>Page {file.current} of {file.total}</span>
+                          <span>{Math.round((file.current / file.total) * 100)}%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            className="h-full bg-blue-500"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${(file.current / file.total) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {file.errorMessage && (
+                      <p className="text-xs text-red-500">{file.errorMessage}</p>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
